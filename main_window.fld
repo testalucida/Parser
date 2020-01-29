@@ -1,0 +1,22 @@
+# data file for the Fltk User Interface Designer (fluid)
+version 1,0400
+header_name {.h}
+code_name {.cxx}
+decl {\#include "OutlineTree.h"} {selected public global
+}
+
+Function {make_window()} {open
+} {
+  Fl_Window {} {open
+    xywh {455 169 370 520} type Double visible
+  } {
+    Fl_Group {} {open
+      xywh {0 0 370 520}
+    } {
+      Fl_Tree g_pTree {
+        xywh {0 0 370 520}
+        class OutlineTree
+      }
+    }
+  }
+}
