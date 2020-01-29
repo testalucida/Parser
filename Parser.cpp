@@ -4,6 +4,7 @@
 #include <cstdlib> /* fopen, fseek, ... */
 #include <iostream>
 #include <cstring>
+#include <algorithm>
 
 using namespace std;
 
@@ -19,10 +20,14 @@ Parser::Parser() {
 Parser::~Parser() {
 	if (_pCode)
 		free(_pCode);
+
+	for( Tag* tag : _tags ) {
+		delete tag;
+	}
 }
 
-void Parser::parseFile(const char *pFilename) {
-	_outline.clear();
+Tags& Parser::parseFile(const char *pFilename) {
+	_tags.clear();
 
 	size_t size;
 
@@ -45,12 +50,13 @@ void Parser::parseFile(const char *pFilename) {
 	/* NULL-terminate the buffer */
 	_pCode[size] = '\0';
 
-	createOutline();
-	cerr << "***********************" << endl << _outline << endl;
-
+	createTags();
+	return _tags;
 }
 
-void Parser::createOutline() {
+void Parser::createTags() {
+	//TODO: do we have to deal with line breaks?
+	string tempbuffer;
 	for (const char *p = _pCode; *p; p++) {
 		switch (*p) {
 		case '/':
@@ -77,16 +83,42 @@ void Parser::createOutline() {
 				char buffer[256] = {'\0'};
 				p = isInclude(p, buffer);
 				if(*buffer) {
-					_outline += buffer;
-					_outline += EOL;
+					Tag* pTag = new Tag;
+					pTag->isInclude = true;
+					pTag->text = buffer;
+					_tags.push_back(pTag);
 				}
 			}
 			break;
-		default: /*for test purposes */
-			cerr << *p;
+		case '\'':
+			p = proceedTo(p, "'"); //omit constant characters
+			break;
+		case '"':
+			p = proceedTo(p, "\""); //omit literals
+			break;
+		case '{':
+			{
+				// check tempbuffer if '{' is preceded by a class declaration
+				// or function/method
+				// signature
+				Tag* pTag = checkForOutlineRelevance(tempbuffer);
+				if (pTag) {
+					_tags.push_back(pTag);
+					_inNamespace = pTag->isNamespace;
+					_inClassOrStruct = (pTag->isClass || pTag->isStruct);
+				}
+
+				//if it's a method/function definiton or
+				//if/switch/else/for/while statement proceed to closing '}'
+				//TODO
+			}
+			break;
+		default:
+			//read *p into tempbuffer. When reaching next opening curly bracket
+			//we'll check if tempbuffer's content is relevant for outline.
+			tempbuffer += *p;
 			break;
 		}
-
 	}
 }
 
@@ -131,20 +163,28 @@ const char* Parser::isInclude(const char* pStart, char* includeFile) const {
 	return proceedToLineEnd(p);
 }
 
-inline const char* Parser::createCstring(const char* p1, const char* p2, char* cs) const {
-	for(char* pC = cs; p1 <= p2; p1++, pC++) {
+/**
+ * Creates a string  in the given char buffer cs consisting of the chars
+ * between p1 and p2. *p1 and *p2 are included.
+ * cs will be terminated by 0x00.
+ * The start pointer p1 is returned.
+ */
+const char*
+Parser::createCstring(const char* p1, const char* p2, char* cs) const {
+	char* pC = cs;
+	for(; p1 <= p2; p1++, pC++) {
 		*pC = *p1;
 	}
+	*pC = 0x00;
 	return p1;
 }
 
 /**
- * Checks if searchlen chars in 'in' for 'what'.
- * If 'what' is found in 'in', returns a pointer to the begin of the found string.
- * Else return NULL;
+ * Checks if 's' starts with 'what'.
+ * If so, returns true, else false.
  */
-bool Parser::startsWith(const char* in, const char* what) const {
-	const char* p = in;
+bool Parser::startsWith(const char* s, const char* what) const {
+	const char* p = s;
 	const char* p2 = what;
 	int len = strlen(what);
 	for( int i = 0; i < len; i++, p++, p2++) {
@@ -153,7 +193,48 @@ bool Parser::startsWith(const char* in, const char* what) const {
 	return true;
 }
 
-
+/**
+ * Examines tmp for content relevant for an outline. This might be
+ * a class declaration, method signature etc.
+ * if and switch statements, for- and while- loops are ignored.
+ * tmp contains code which was collected from the end of the last processed
+ * code fragment (e.g include stmt or comment) until an opening curly bracket.
+ * tmp must not end with '{' (but 1 char before).
+ * tmp must not contain any comments or literals.
+ */
+Tag* Parser::checkForOutlineRelevance(std::string& tmp) const {
+	//parsing from right to left.
+	const char* pStart = tmp.c_str();
+	const char* p = pStart + tmp.length() - 1;
+	//omit EOL and spaces:
+ 	while (p >= pStart && (*p == EOL || *p == SPACE)) --p;
+	//if we find ';' or '{' we're dealing with a code block - ignore.
+	if (*p == ';' || *p == '{') return NULL;
+	//if we find ':' it's a case: stmt - ignore
+	if (*p == ':') return NULL;
+	//if we find a closing (right) parenthesis, go to the left one:
+	if (*p == ')') {
+		while (p >= pStart && *p != '(') --p;
+		if (*p != '(') return NULL; //code not consistent
+	}
+	//omit EOL and spaces:
+	while (p >= pStart && (*p == EOL || *p == SPACE)) --p;
+	//Now we have a remaining string from pStart till the last char
+	//left of the opening parenthesis.
+	//That could be a method or function definition...
+	//   const void MyClass::myMethod
+	//   static int myFunction
+	//or a class declaration...
+	//   class MyClass : public MyBaseClass
+	//or a struct definition...
+	//   struct MyStruct
+	//   or simply struct
+	//or a enum definition...
+	//   enum MyValues
+	//or a global array initialization...
+	//   const static char* myCStringArray[] =
+	return NULL;
+}
 
 
 
